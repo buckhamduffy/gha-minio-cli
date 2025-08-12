@@ -1,0 +1,7 @@
+# Node / general
+node_modules/
+.DS_Store
+
+# GitHub Actions cache artifacts (not stored in repo)
+*.sha256sum.local
+.idea/

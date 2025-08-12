@@ -1,0 +1,84 @@
+name: Test MinIO CLI Action
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-action:
+    runs-on: ubuntu-latest
+
+    services:
+      minio:
+        image: minio/minio:latest
+        ports:
+          - 9000:9000
+          - 9001:9001
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 30s
+          --health-timeout 20s
+          --health-retries 3
+        command: server /data --console-address ":9001"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test Action - Latest Version
+        uses: ./
+        with:
+          alias: testminio
+          url: http://localhost:9000
+          access_key: minioadmin
+          secret_key: minioadmin
+          bucket: test-bucket
+
+      - name: Verify mc is in PATH
+        run: |
+          which mc
+          mc --version
+
+      - name: Test MinIO operations
+        run: |
+          # List buckets
+          mc ls testminio
+
+          # Create a test file
+          echo "Hello MinIO!" > test.txt
+
+          # Upload file
+          mc cp test.txt testminio/test-bucket/
+
+          # List bucket contents
+          mc ls testminio/test-bucket
+
+          # Download file
+          mc cp testminio/test-bucket/test.txt downloaded.txt
+
+          # Verify content
+          cat downloaded.txt
+
+          # Clean up
+          mc rm testminio/test-bucket/test.txt
+
+      - name: Test Action - Specific Version
+        uses: ./
+        with:
+          alias: testminio2
+          url: http://localhost:9000
+          access_key: minioadmin
+          secret_key: minioadmin
+          version: "RELEASE.2024-01-16T16-06-34Z"
+          verify_checksum: false
+
+      - name: Test specific version works
+        run: |
+          mc --version
+          mc ls testminio2

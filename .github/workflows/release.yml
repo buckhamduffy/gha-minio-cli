@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-major-tag:
+    runs-on: ubuntu-latest
+    if: github.event.release.prerelease == false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          # Extract version from tag (e.g., v1.2.3 -> 1.2.3)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Extract major version (e.g., 1.2.3 -> v1)
+          MAJOR_VERSION=v$(echo $VERSION | cut -d. -f1)
+          echo "major_version=$MAJOR_VERSION" >> $GITHUB_OUTPUT
+
+          echo "Full version: $VERSION"
+          echo "Major version: $MAJOR_VERSION"
+
+      - name: Update major version tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Delete the major version tag if it exists
+          git tag -d ${{ steps.version.outputs.major_version }} || true
+          git push origin :refs/tags/${{ steps.version.outputs.major_version }} || true
+
+          # Create new major version tag pointing to this release
+          git tag ${{ steps.version.outputs.major_version }} ${{ github.sha }}
+          git push origin ${{ steps.version.outputs.major_version }}
+
+          echo "Updated ${{ steps.version.outputs.major_version }} tag to point to ${{ github.sha }}"
+
+  test-release:
+    runs-on: ubuntu-latest
+    needs: update-major-tag
+    if: github.event.release.prerelease == false
+
+    services:
+      minio:
+        image: minio/minio:latest
+        ports:
+          - 9000:9000
+          - 9001:9001
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 30s
+          --health-timeout 20s
+          --health-retries 3
+        command: server /data --console-address ":9001"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test released action
+        uses: buckhamduffy/gha-minio-cli@${{ github.ref_name }}
+        with:
+          alias: testminio
+          url: http://localhost:9000
+          access_key: minioadmin
+          secret_key: minioadmin
+          bucket: release-test-bucket
+
+      - name: Verify release works
+        run: |
+          echo "Testing released version ${{ github.ref_name }}"
+          mc --version
+          mc ls testminio
+          echo "Release test successful!"

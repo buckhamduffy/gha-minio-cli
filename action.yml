@@ -1,0 +1,151 @@
+name: "Setup MinIO Client"
+description: "Download, weekly-cache, and configure the MinIO client (mc) on GitHub Actions"
+author: "B&D"
+branding:
+  icon: "package"
+  color: "yellow"
+
+# v1: Linux only (ubuntu-latest). Add macOS/Windows in a future release.
+inputs:
+  alias:
+    description: "Alias name for MinIO"
+    required: true
+  url:
+    description: "MinIO server URL (e.g. http://minio:9000)"
+    required: true
+  access_key:
+    description: "MinIO access key (use GitHub Secrets)"
+    required: true
+  secret_key:
+    description: "MinIO secret key (use GitHub Secrets)"
+    required: true
+  bucket:
+    description: "Bucket to create if missing (optional)"
+    required: false
+    default: ""
+  install_path:
+    description: "Directory to place mc and add to PATH"
+    required: false
+    default: "$RUNNER_TEMP/bin"
+  cache_root:
+    description: "Directory used for caching the mc binary"
+    required: false
+    default: "$HOME/.cache/setup-minio-client"
+  verify_checksum:
+    description: "Verify SHA256 checksum of the download"
+    required: false
+    default: "true"
+  version:
+    description: "MinIO client version to install (e.g. 2023-08-23T10-07-06Z or 'latest')"
+    required: false
+    default: "latest"
+  download_url:
+    description: "Override download URL (defaults to official mc for linux-amd64, version-aware)"
+    required: false
+    default: ""
+
+outputs:
+  mc-path:
+    description: "Full path to the mc binary added to PATH"
+    value: ${{ steps.export.outputs.mc_path }}
+  mc-version:
+    description: "Output of 'mc --version'"
+    value: ${{ steps.version.outputs.mc_version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Compute weekly cache key
+      shell: bash
+      run: echo "WEEK_KEY=$(date -u +%G-%V)" >> "$GITHUB_ENV"
+
+    - name: Determine download URL
+      id: mcurl
+      shell: bash
+      run: |
+        set -euo pipefail
+        # If download_url is set, use it. Otherwise, construct based on version.
+        if [ -n "${{ inputs.download_url }}" ]; then
+          url="${{ inputs.download_url }}"
+        else
+          if [ "${{ inputs.version }}" = "latest" ]; then
+            url="https://dl.min.io/client/mc/release/linux-amd64/mc"
+            version_cache="latest"
+          else
+            url="https://dl.min.io/client/mc/release/linux-amd64/mc.RELEASE.${{ inputs.version }}"
+            version_cache="${{ inputs.version }}"
+          fi
+        fi
+        echo "mc_url=$url" >> "$GITHUB_OUTPUT"
+        echo "mc_version_cache=${version_cache:-latest}" >> "$GITHUB_OUTPUT"
+
+    - name: Ensure cache directory exists
+      shell: bash
+      run: |
+        mkdir -p "${{ inputs.cache_root }}"
+        echo "CACHE_FILE=${{ inputs.cache_root }}/mc" >> "$GITHUB_ENV"
+
+    - name: Cache MinIO mc (weekly + version)
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.cache_root }}/mc
+        key: minio-mc-linux-amd64-${{ steps.mcurl.outputs.mc_version_cache }}-${{ env.WEEK_KEY }}
+
+    - name: Download mc if not cached
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ ! -f "${CACHE_FILE}" ]; then
+          echo "Downloading mc from ${{ steps.mcurl.outputs.mc_url }}"
+          curl -sSL -o "${CACHE_FILE}" "${{ steps.mcurl.outputs.mc_url }}"
+          chmod +x "${CACHE_FILE}"
+
+          if [ "${{ inputs.verify_checksum }}" = "true" ]; then
+            # Try to fetch and verify checksum; if unavailable, continue.
+            SUM_URL="${{ steps.mcurl.outputs.mc_url }}.sha256sum"
+            if curl -fsSL "${SUM_URL}" -o "${CACHE_FILE}.sha256sum"; then
+              awk '{print $1"  '"${CACHE_FILE}"'"}' "${CACHE_FILE}.sha256sum" > "${CACHE_FILE}.sha256sum.local"
+              sha256sum -c "${CACHE_FILE}.sha256sum.local"
+            else
+              echo "Checksum file not found at ${SUM_URL}; skipping verification."
+            fi
+          fi
+        else
+          echo "Using cached mc at ${CACHE_FILE}"
+        fi
+
+    - name: Install mc and add to PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.install_path }}"
+        cp -f "${CACHE_FILE}" "${{ inputs.install_path }}/mc"
+        chmod +x "${{ inputs.install_path }}/mc"
+        echo "${{ inputs.install_path }}" >> "$GITHUB_PATH"
+
+    - name: Export mc path
+      id: export
+      shell: bash
+      run: echo "mc_path=${{ inputs.install_path }}/mc" >> "$GITHUB_OUTPUT"
+
+    - name: Configure MinIO alias
+      shell: bash
+      run: |
+        set -euo pipefail
+        mc alias set "${{ inputs.alias }}" "${{ inputs.url }}" "${{ inputs.access_key }}" "${{ inputs.secret_key }}"
+
+    - name: Create bucket if provided
+      if: ${{ inputs.bucket != '' }}
+      shell: bash
+      run: mc mb --ignore-existing "${{ inputs.alias }}/${{ inputs.bucket }}"
+
+    - name: mc version
+      id: version
+      shell: bash
+      run: |
+        set -euo pipefail
+        v="$(mc --version || true)"
+        echo "$v"
+        echo "mc_version<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$v" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"

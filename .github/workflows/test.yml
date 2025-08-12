@@ -2,9 +2,9 @@ name: Test MinIO CLI Action
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -25,7 +25,7 @@ jobs:
           --health-interval 30s
           --health-timeout 20s
           --health-retries 3
-        command: server /data --console-address ":9001"
+        cmd: server /data --console-address ":9001"
 
     steps:
       - name: Checkout

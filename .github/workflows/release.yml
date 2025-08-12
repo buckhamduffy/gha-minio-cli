@@ -64,14 +64,14 @@ jobs:
           --health-interval 30s
           --health-timeout 20s
           --health-retries 3
-        command: server /data --console-address ":9001"
+        cmd: server /data --console-address ":9001"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Test released action
-        uses: buckhamduffy/gha-minio-cli@${{ github.ref_name }}
+        uses: buckhamduffy/gha-minio-cli@${{ github.event.release.tag_name }}
         with:
           alias: testminio
           url: http://localhost:9000
@@ -81,7 +81,7 @@ jobs:
 
       - name: Verify release works
         run: |
-          echo "Testing released version ${{ github.ref_name }}"
+          echo "Testing released version ${{ github.event.release.tag_name }}"
           mc --version
           mc ls testminio
           echo "Release test successful!"

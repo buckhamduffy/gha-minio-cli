@@ -25,7 +25,6 @@ jobs:
           --health-interval 30s
           --health-timeout 20s
           --health-retries 3
-        cmd: server /data --console-address ":9001"
 
     steps:
       - name: Checkout

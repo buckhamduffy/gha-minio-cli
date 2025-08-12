@@ -11,24 +11,53 @@ jobs:
   test-action:
     runs-on: ubuntu-latest
 
-    services:
-      minio:
-        image: minio/minio:latest
-        ports:
-          - 9000:9000
-          - 9001:9001
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 30s
-          --health-timeout 20s
-          --health-retries 3
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: System Info
+        run: |
+          echo "=== System Information ==="
+          uname -a
+          docker --version
+          echo "=== Network Information ==="
+          netstat -tuln | grep -E "(9000|9001)" || echo "Ports 9000/9001 available"
+
+      - name: Start MinIO
+        run: |
+          echo "Starting MinIO..."
+          # Create data directory
+          sudo mkdir -p /tmp/minio-data
+          sudo chmod 777 /tmp/minio-data
+
+          # Start MinIO in background
+          docker run -d \
+            --name minio \
+            -p 9000:9000 \
+            -p 9001:9001 \
+            -e "MINIO_ROOT_USER=minioadmin" \
+            -e "MINIO_ROOT_PASSWORD=minioadmin" \
+            -v /tmp/minio-data:/data \
+            minio/minio server /data --console-address ":9001"
+
+          # Wait for MinIO to be ready
+          echo "Waiting for MinIO to start..."
+          for i in {1..30}; do
+            if curl -f http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+              echo "MinIO is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 3
+          done
+
+          # Verify MinIO is accessible
+          echo "Testing MinIO accessibility..."
+          curl -v http://localhost:9000/minio/health/live || {
+            echo "MinIO health check failed!"
+            docker logs minio
+            exit 1
+          }
 
       - name: Test Action - Latest Version
         uses: ./
@@ -81,3 +110,9 @@ jobs:
         run: |
           mc --version
           mc ls testminio2
+
+      - name: Cleanup MinIO
+        if: always()
+        run: |
+          docker stop minio || true
+          docker rm minio || true
